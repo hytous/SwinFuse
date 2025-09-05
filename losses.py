@@ -1,9 +1,39 @@
 # -*- coding: utf-8 -*-
 """
-损失函数模块
-实现InfoNCE、Deep CORAL、Barlow Twins等先进损失函数
+损失函数模块 (losses.py)
 
-作者: 基于SwinFuse项目重构  
+功能说明:
+    实现多种先进的对比学习损失函数，用于红外-可见光特征对齐
+
+主要内容:
+    - BaseLoss: 损失函数基类
+    - InfoNCELoss: 对比学习核心损失
+        * 让同一场景的IR/VIS特征相似
+        * 让不同场景的特征差异化
+        * 温度参数控制分布锐度
+    - DeepCORALLoss: 领域适应损失
+        * 对齐IR和VIS特征的协方差矩阵
+        * 减少模态间的分布差异
+    - BarlowTwinsLoss: 特征去冗余损失
+        * 最大化对角相关性
+        * 最小化非对角相关性
+        * 防止表示坍塌
+    - CombinedLoss: 组合损失函数
+        * 加权组合多种损失
+        * 平衡不同优化目标
+    - create_loss_function: 工厂函数
+    - compute_feature_similarity: 特征相似度计算
+
+损失函数数学:
+    InfoNCE: -log(exp(sim_pos/τ) / Σexp(sim_i/τ))
+    CORAL: ||Cov(f_ir) - Cov(f_vis)||²_F / (4d²)
+    Barlow: Σᵢ(1-C_ii)² + λΣᵢΣⱼ≠ᵢC_ij²
+
+使用方法:
+    from losses import create_loss_function
+    criterion = create_loss_function(config)
+
+作者: 基于SwinFuse项目重构
 日期: 2025年9月
 """
 

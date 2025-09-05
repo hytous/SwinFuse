@@ -1,7 +1,45 @@
 # -*- coding: utf-8 -*-
 """
-训练器模块
-管理训练过程、优化器、调度器等
+训练器模块 (trainer.py)
+
+功能说明:
+    管理完整的训练流程，集成Optuna超参数优化和WandB实验追踪
+
+主要内容:
+    - EarlyStopping: 早停机制类
+        * 监控验证损失变化
+        * 避免过拟合
+    - TrainingLogger: 训练日志记录器
+        * 本地日志保存
+        * WandB实验追踪集成
+        * 实时指标记录
+    - Trainer: 主训练器类
+        * 完整训练循环管理
+        * 优化器和调度器创建
+        * 模型保存和加载
+        * Optuna剪枝支持
+        * WandB可视化集成
+    - create_hyperparameter_study: Optuna超参数优化
+        * 自动搜索最优超参数
+        * 支持并行优化
+        * 智能剪枝机制
+    - create_trial_config: 为优化试验创建配置
+
+训练流程:
+    1. 数据加载 -> 2. 模型前向 -> 3. 损失计算 -> 4. 反向传播
+    5. 参数更新 -> 6. 验证评估 -> 7. 早停检查 -> 8. 模型保存
+
+集成功能:
+    - WandB: 实时监控、实验对比、模型管理
+    - Optuna: 超参数优化、试验剪枝、结果分析
+
+使用方法:
+    # 普通训练
+    trainer = Trainer(model, train_loader, val_loader, config, use_wandb=True)
+    trainer.train()
+    
+    # 超参数优化
+    study = create_hyperparameter_study(config, model_factory, data_factory)
 
 作者: 基于SwinFuse项目重构
 日期: 2025年9月
@@ -19,6 +57,21 @@ import numpy as np
 from typing import Dict, List, Tuple, Optional
 
 from losses import create_loss_function, compute_feature_similarity, CombinedLoss
+
+# 可选依赖导入
+try:
+    import wandb
+    WANDB_AVAILABLE = True
+except ImportError:
+    WANDB_AVAILABLE = False
+    print("⚠️ WandB未安装，可视化功能将被禁用")
+
+try:
+    import optuna
+    OPTUNA_AVAILABLE = True
+except ImportError:
+    OPTUNA_AVAILABLE = False
+    print("⚠️ Optuna未安装，超参数优化功能将被禁用")
 
 
 class EarlyStopping:
@@ -42,10 +95,11 @@ class EarlyStopping:
 
 
 class TrainingLogger:
-    """训练日志记录器"""
+    """训练日志记录器 - 集成WandB支持"""
     
-    def __init__(self, log_dir: str):
+    def __init__(self, log_dir: str, use_wandb: bool = False, project_name: str = "SwinFuse-FeatureExtractor"):
         self.log_dir = log_dir
+        self.use_wandb = use_wandb and WANDB_AVAILABLE
         os.makedirs(log_dir, exist_ok=True)
         
         # 记录列表
@@ -55,6 +109,40 @@ class TrainingLogger:
         self.similarities = []
         self.learning_rates = []
         
+        # 初始化WandB
+        if self.use_wandb:
+            try:
+                wandb.init(
+                    project=project_name,
+                    name=f"swinfuse_{int(time.time())}",
+                    tags=["feature-extraction", "contrastive-learning", "ir-visible"]
+                )
+                print("✅ WandB初始化成功")
+            except Exception as e:
+                print(f"⚠️ WandB初始化失败: {e}")
+                self.use_wandb = False
+        
+    def log_config(self, config):
+        """记录配置到WandB"""
+        if self.use_wandb:
+            wandb.config.update({
+                "learning_rate": config.training.learning_rate,
+                "batch_size": config.training.batch_size,
+                "num_epochs": config.training.num_epochs,
+                "weight_decay": config.training.weight_decay,
+                "scheduler_type": config.training.scheduler_type,
+                "projection_input_dim": config.model.projection_input_dim,
+                "projection_hidden_dim": config.model.projection_hidden_dim,
+                "projection_output_dim": config.model.projection_output_dim,
+                "loss_type": config.loss.loss_type,
+                "temperature": config.loss.temperature,
+                "lambda_coral": config.loss.lambda_coral,
+                "lambda_barlow": config.loss.lambda_barlow,
+                "image_size": config.data.image_size,
+                "use_augmentation": config.data.use_augmentation,
+                "device": config.device
+            })
+    
     def log_epoch(self, 
                   epoch: int,
                   train_loss: float,
@@ -66,16 +154,35 @@ class TrainingLogger:
         self.train_losses.append(train_loss)
         self.val_losses.append(val_loss)
         
+        # 准备WandB日志
+        wandb_metrics = {
+            "epoch": epoch,
+            "train_loss": train_loss,
+            "val_loss": val_loss,
+            "learning_rate": lr if lr is not None else 0.0
+        }
+        
         if loss_components:
             for key in self.loss_components:
                 if key in loss_components:
                     self.loss_components[key].append(loss_components[key])
+                    wandb_metrics[f"train_{key}"] = loss_components[key]
         
         if similarity is not None:
             self.similarities.append(similarity)
+            wandb_metrics["similarity"] = similarity
             
         if lr is not None:
             self.learning_rates.append(lr)
+        
+        # 记录到WandB
+        if self.use_wandb:
+            wandb.log(wandb_metrics, step=epoch)
+    
+    def finish(self):
+        """结束WandB运行"""
+        if self.use_wandb:
+            wandb.finish()
     
     def save_logs(self):
         """保存日志到文件"""
@@ -113,18 +220,21 @@ class TrainingLogger:
 
 
 class Trainer:
-    """训练器类"""
+    """训练器类 - 集成Optuna和WandB支持"""
     
     def __init__(self, 
                  model: nn.Module,
                  train_loader,
                  val_loader,
-                 config):
+                 config,
+                 use_wandb: bool = False,
+                 trial: Optional['optuna.Trial'] = None):
         self.model = model
         self.train_loader = train_loader
         self.val_loader = val_loader
         self.config = config
         self.device = torch.device(config.device)
+        self.trial = trial  # Optuna试验对象
         
         # 创建损失函数
         self.criterion = create_loss_function(config)
@@ -144,8 +254,15 @@ class Trainer:
                 min_delta=config.training.min_delta
             )
         
-        # 日志记录
-        self.logger = TrainingLogger(config.paths.log_dir)
+        # 日志记录 - 集成WandB
+        self.logger = TrainingLogger(
+            config.paths.log_dir, 
+            use_wandb=use_wandb and not trial  # 在Optuna试验中不使用WandB避免冲突
+        )
+        
+        # 记录配置到WandB
+        if use_wandb and not trial:
+            self.logger.log_config(config)
         
         # 最佳模型记录
         self.best_val_loss = float('inf')
@@ -301,10 +418,13 @@ class Trainer:
             print(f"💾 保存检查点: {path}")
     
     def train(self):
-        """主训练循环"""
+        """主训练循环 - 集成Optuna剪枝和WandB记录"""
         print("\n" + "=" * 60)
         print("开始训练")
         print("=" * 60)
+        print(f"使用设备: {self.device}")
+        print(f"WandB状态: {'✅启用' if self.logger.use_wandb else '❌禁用'}")
+        print(f"Optuna剪枝: {'✅启用' if self.trial else '❌禁用'}")
         
         start_time = time.time()
         
@@ -328,6 +448,14 @@ class Trainer:
                 train_components, similarity, current_lr
             )
             
+            # Optuna剪枝检查
+            if self.trial is not None:
+                self.trial.report(val_loss, epoch)
+                if self.trial.should_prune():
+                    print(f"\n✂️ Optuna剪枝触发：第{epoch+1}轮停止试验")
+                    self.logger.finish()
+                    raise optuna.TrialPruned()
+            
             # 打印结果
             epoch_time = time.time() - epoch_start
             print(f"\nEpoch {epoch+1}/{self.config.training.num_epochs} (耗时: {epoch_time:.1f}s)")
@@ -345,6 +473,10 @@ class Trainer:
             if val_loss < self.best_val_loss:
                 self.best_val_loss = val_loss
                 self.save_model(self.best_model_path, epoch + 1, is_best=True)
+                
+                # 记录最佳模型到WandB
+                if self.logger.use_wandb:
+                    wandb.log({"best_val_loss": val_loss}, step=epoch+1)
             
             # 定期保存检查点
             if (epoch + 1) % self.config.save_interval == 0:
@@ -364,7 +496,9 @@ class Trainer:
         print(f"\n🎉 训练完成！")
         print(f"总耗时: {total_time/3600:.1f} 小时")
         print(f"最佳验证损失: {self.best_val_loss:.6f}")
-        print(f"最佳epoch: {self.logger.get_best_epoch()}")
+        
+        # 结束WandB运行
+        self.logger.finish()
         
         # 保存最终模型和日志
         final_model_path = os.path.join(self.config.paths.checkpoint_dir, 'final_model.pth')
@@ -372,6 +506,119 @@ class Trainer:
         self.logger.save_logs()
         
         return self.best_val_loss
+
+
+def create_hyperparameter_study(config, model_factory, data_loaders_factory, n_trials: int = 50):
+    """创建Optuna超参数优化研究"""
+    if not OPTUNA_AVAILABLE:
+        raise ImportError("需要安装Optuna: pip install optuna")
+    
+    def suggest_hyperparameters(trial):
+        """建议超参数"""
+        return {
+            # 学习率
+            "learning_rate": trial.suggest_float("learning_rate", 1e-6, 1e-3, log=True),
+            
+            # 批次大小
+            "batch_size": trial.suggest_categorical("batch_size", [4, 8, 16, 32]),
+            
+            # 权重衰减
+            "weight_decay": trial.suggest_float("weight_decay", 1e-6, 1e-3, log=True),
+            
+            # 温度参数
+            "temperature": trial.suggest_float("temperature", 0.01, 0.2),
+            
+            # 损失权重
+            "lambda_coral": trial.suggest_float("lambda_coral", 0.001, 0.1, log=True),
+            "lambda_barlow": trial.suggest_float("lambda_barlow", 0.001, 0.1, log=True),
+            
+            # 投影头配置
+            "projection_hidden_dim": trial.suggest_categorical("projection_hidden_dim", [128, 256, 512]),
+            "projection_output_dim": trial.suggest_categorical("projection_output_dim", [64, 128, 256]),
+            
+            # 调度器参数
+            "scheduler_type": trial.suggest_categorical("scheduler_type", ["cosine", "step"]),
+            "warmup_epochs": trial.suggest_int("warmup_epochs", 1, 5),
+        }
+    
+    def objective(trial):
+        """优化目标函数"""
+        # 获取建议的超参数
+        hyperparams = suggest_hyperparameters(trial)
+        
+        # 创建配置副本并更新超参数
+        trial_config = create_trial_config(config, hyperparams)
+        
+        # 创建模型和数据加载器
+        model = model_factory(trial_config)
+        train_loader, val_loader = data_loaders_factory(trial_config)
+        
+        # 创建训练器
+        trainer = Trainer(
+            model=model,
+            train_loader=train_loader,
+            val_loader=val_loader,
+            config=trial_config,
+            use_wandb=False,  # 在Optuna中不使用WandB避免冲突
+            trial=trial
+        )
+        
+        # 训练模型
+        try:
+            best_val_loss = trainer.train()
+            return best_val_loss
+        except Exception as e:
+            print(f"Trial {trial.number} 失败: {e}")
+            raise optuna.TrialPruned()
+    
+    # 创建研究
+    study = optuna.create_study(direction="minimize")
+    
+    # 执行优化
+    study.optimize(objective, n_trials=n_trials)
+    
+    # 输出结果
+    print("=" * 60)
+    print("🎯 超参数优化完成")
+    print("=" * 60)
+    print(f"最佳试验: {study.best_trial.number}")
+    print(f"最佳验证损失: {study.best_value:.6f}")
+    print("最佳超参数:")
+    for key, value in study.best_params.items():
+        print(f"  {key}: {value}")
+    
+    return study
+
+
+def create_trial_config(base_config, hyperparams):
+    """为试验创建配置"""
+    from config import Config
+    
+    config = Config()
+    
+    # 复制基础配置
+    config.training = base_config.training
+    config.data = base_config.data
+    config.model = base_config.model
+    config.loss = base_config.loss
+    config.paths = base_config.paths
+    config.device = base_config.device
+    
+    # 应用超参数
+    config.training.learning_rate = hyperparams["learning_rate"]
+    config.training.batch_size = hyperparams["batch_size"]
+    config.training.weight_decay = hyperparams["weight_decay"]
+    config.training.scheduler_type = hyperparams["scheduler_type"]
+    config.training.warmup_epochs = hyperparams["warmup_epochs"]
+    
+    config.loss.temperature = hyperparams["temperature"]
+    config.loss.lambda_coral = hyperparams["lambda_coral"]
+    config.loss.lambda_barlow = hyperparams["lambda_barlow"]
+    
+    config.model.projection_hidden_dim = hyperparams["projection_hidden_dim"]
+    config.model.projection_output_dim = hyperparams["projection_output_dim"]
+    
+    return config
 
 
 if __name__ == "__main__":

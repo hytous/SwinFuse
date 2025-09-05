@@ -1,7 +1,26 @@
 # -*- coding: utf-8 -*-
 """
-数据处理模块
-处理RoadScene数据集的加载、预处理和增强
+数据加载模块 (data_loader.py)
+
+功能说明:
+    处理RoadScene数据集的加载、预处理和增强，为训练提供IR-可见光图像对
+
+主要内容:
+    - RoadSceneDataset: 自定义数据集类
+        * 加载红外(IR)和可见光(VIS)图像对
+        * 图像预处理 (resize、归一化、转tensor)
+        * 数据增强 (随机翻转、旋转等)
+    - create_dataloaders: 创建训练和验证数据加载器
+    - validate_dataset_paths: 验证数据集路径有效性
+
+数据格式要求:
+    - IR和VIS图像必须有相同的文件名
+    - 支持常见图像格式 (jpg, png, bmp等)
+    - 图像会被resize到指定尺寸 (默认224x224)
+
+使用方法:
+    from data_loader import create_dataloaders
+    train_loader, val_loader = create_dataloaders(config)
 
 作者: 基于SwinFuse项目重构
 日期: 2025年9月

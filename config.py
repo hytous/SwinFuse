@@ -1,7 +1,22 @@
 # -*- coding: utf-8 -*-
 """
-SwinFuse特征提取器微调项目
-统一配置管理模块
+配置管理模块 (config.py)
+
+功能说明:
+    统一管理项目所有配置参数，采用dataclass结构化组织配置项
+
+主要内容:
+    - TrainingConfig: 训练相关配置 (学习率、批次大小、轮数等)
+    - DataConfig: 数据相关配置 (图像尺寸、数据增强、归一化等)
+    - ModelConfig: 模型相关配置 (投影头维度、SwinFuse参数等)
+    - LossConfig: 损失函数配置 (InfoNCE、CORAL、Barlow权重等)
+    - PathConfig: 路径配置 (数据路径、模型路径、输出路径等)
+    - Config: 主配置类，整合所有子配置
+
+使用方法:
+    from config import get_config
+    config = get_config()
+    print(config.training.learning_rate)
 
 作者: 基于SwinFuse项目重构
 日期: 2025年9月

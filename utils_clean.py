@@ -1,7 +1,51 @@
 # -*- coding: utf-8 -*-
 """
-实用工具模块
-提供各种辅助功能
+实用工具模块 (utils_clean.py)
+
+功能说明:
+    提供项目中各种辅助功能和工具函数
+
+主要内容:
+    - 日志系统管理:
+        * setup_logging: 配置日志系统
+        * 支持文件和控制台输出
+        * 可配置日志级别
+    
+    - 系统信息:
+        * print_system_info: 打印系统和硬件信息
+        * GPU信息检测
+        * Python和库版本信息
+    
+    - 文件操作:
+        * backup_config: 备份配置文件
+        * clean_temp_files: 清理临时文件
+        * 安全的文件操作
+    
+    - 模型工具:
+        * count_parameters: 统计模型参数
+        * save_model_info: 保存模型信息
+        * load_checkpoint: 加载检查点
+    
+    - 数据处理:
+        * normalize_features: 特征归一化
+        * compute_metrics: 计算评估指标
+        * visualize_results: 结果可视化
+    
+    - 配置管理:
+        * merge_configs: 合并配置字典
+        * validate_config: 验证配置有效性
+        * config_to_dict: 配置对象转字典
+
+使用特点:
+    - 所有函数都有详细的类型注解
+    - 完整的错误处理
+    - 支持多种日志级别
+    - 跨平台兼容性
+
+使用方法:
+    from utils_clean import setup_logging, print_system_info
+    logger = setup_logging("logs")
+    print_system_info()
 
 作者: 基于SwinFuse项目重构
 日期: 2025年9月

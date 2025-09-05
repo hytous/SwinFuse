@@ -1,7 +1,29 @@
 # -*- coding: utf-8 -*-
 """
-模型定义模块
-包含特征提取器、投影头等组件
+模型定义模块 (models.py)
+
+功能说明:
+    基于SwinFuse的特征提取器模型定义，用于红外-可见光图像特征对齐
+
+主要内容:
+    - ProjectionHead: 投影头模块
+        * 全局平均池化 + MLP
+        * 用于对比学习的特征投影
+        * L2归一化输出
+    - FeatureExtractor: 特征提取器主模型
+        * 复制SwinFuse编码器组件 (patch_embed, EN1_0, EN2_0, EN3_0)
+        * 添加投影头进行特征降维
+        * 支持冻结/解冻编码器参数
+    - load_pretrained_swinfuse: 加载预训练SwinFuse模型
+    - create_feature_extractor: 工厂函数创建特征提取器
+
+模型架构:
+    输入 -> SwinFuse编码器 -> 投影头 -> L2归一化特征
+    [B,1,224,224] -> [B,96,H,W] -> [B,128] (归一化)
+
+使用方法:
+    from models import create_feature_extractor
+    model = create_feature_extractor(config, device)
 
 作者: 基于SwinFuse项目重构
 日期: 2025年9月

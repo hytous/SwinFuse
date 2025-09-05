@@ -1,3 +1,54 @@
+"""
+SwinFuse网络模块 (net.py) - 原始网络定义
+
+功能说明:
+    包含原始SwinFuse网络的完整定义，基于Swin Transformer架构
+
+主要内容:
+    - Mlp: 多层感知机模块
+    - WindowAttention: 窗口注意力机制
+    - SwinTransformerBlock: Swin Transformer基础块
+    - PatchMerging: 补丁合并层
+    - BasicLayer: 基础Swin层
+    - PatchEmbed: 补丁嵌入层
+    - StageModule: 阶段模块
+    - SwinFuse: 主网络类
+        * encoder: 编码器方法 (用于特征提取)
+        * transformer/untransformer: 特征变换
+        * fusion: 融合方法 (占位实现)
+        * up_x4: 上采样解码器
+        * finaldecoder: 最终解码器
+
+网络架构:
+    输入 -> PatchEmbed -> Swin编码器块(EN1_0, EN2_0, EN3_0) -> 归一化
+    [B,1,H,W] -> [B,L,C] -> [B,L,C] -> [B,C,H',W']
+
+关键特性:
+    - 分层特征提取
+    - 窗口注意力机制
+    - 相对位置编码
+    - 残差连接
+    - LayerNorm归一化
+
+使用说明:
+    本文件主要为特征提取器提供编码器组件，不直接使用完整网络
+    特征提取器复用其中的: patch_embed, EN1_0, EN2_0, EN3_0, norm
+
+依赖库:
+    - torch: 深度学习框架
+    - einops: 张量操作
+    - timm: Transformer组件
+    - fusion_strategy: 融合策略 (占位模块)
+
+注意事项:
+    - fusion_strategy模块为占位实现
+    - 完整SwinFuse类未定义forward方法
+    - 仅编码器部分用于特征提取
+
+作者: 原始SwinFuse项目
+修改: 2025年9月 (添加融合策略占位)
+"""
+
 import torch
 import torch.nn as nn
 import torch.utils.checkpoint as checkpoint

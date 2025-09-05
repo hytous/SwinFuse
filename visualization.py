@@ -1,7 +1,60 @@
 # -*- coding: utf-8 -*-
 """
-可视化模块
-提供训练过程和结果的可视化功能
+可视化模块 (visualization.py)
+
+功能说明:
+    提供训练过程和结果的可视化功能，支持多种图表和分析
+
+主要内容:
+    - TrainingVisualizer: 训练过程可视化器
+        * 损失曲线绘制 (训练/验证损失)
+        * 学习率调度可视化
+        * 损失组件分解图 (InfoNCE, CORAL, Barlow)
+        * 特征相似度变化图
+        * 训练统计汇总
+    
+    - FeatureVisualizer: 特征分析可视化器
+        * 特征分布直方图
+        * 特征相似度热图
+        * t-SNE降维可视化
+        * PCA主成分分析
+        * 特征聚类分析
+    
+    - ResultVisualizer: 结果展示可视化器
+        * IR-VIS图像对比展示
+        * 特征匹配可视化
+        * 配准结果展示
+        * 错误分析图表
+    
+    - ExperimentComparison: 实验对比工具
+        * 多实验损失对比
+        * 超参数影响分析
+        * 性能指标对比
+        * 收敛速度分析
+
+图表类型:
+    - 线图: 损失曲线、学习率变化
+    - 热图: 相似度矩阵、特征相关性
+    - 散点图: 特征分布、聚类结果
+    - 柱状图: 性能对比、统计分析
+    - 子图: 综合展示、多维对比
+
+可视化特性:
+    - 中文字体支持
+    - 专业配色方案
+    - 高分辨率输出
+    - 交互式图表支持
+    - 自动保存功能
+
+使用方法:
+    from visualization import TrainingVisualizer
+    visualizer = TrainingVisualizer()
+    visualizer.plot_loss_curves(train_losses, val_losses)
+
+输出格式:
+    - PNG/PDF: 静态图表
+    - HTML: 交互式图表
+    - SVG: 矢量图形
 
 作者: 基于SwinFuse项目重构
 日期: 2025年9月

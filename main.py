@@ -1,7 +1,45 @@
 # -*- coding: utf-8 -*-
 """
-SwinFuse特征提取器微调主脚本
-重构后的清晰、模块化训练入口
+主训练入口模块 (main.py)
+
+功能说明:
+    项目的主要训练入口，整合所有组件进行端到端训练
+
+主要内容:
+    - set_random_seed: 设置随机种子确保可重现性
+    - check_environment: 检查运行环境 (Python版本、PyTorch、CUDA等)
+    - validate_setup: 验证项目设置 (数据路径、模型路径、输出目录等)
+    - main: 主训练函数
+        * 环境验证
+        * 配置加载和验证
+        * 数据加载器创建
+        * 模型创建和初始化
+        * 训练器创建和执行
+        * 结果汇总和保存
+
+执行流程:
+    1. 环境检查 -> 2. 配置验证 -> 3. 数据准备 -> 4. 模型创建
+    5. 训练执行 -> 6. 结果保存 -> 7. 性能报告
+
+支持功能:
+    - 命令行参数解析
+    - 多种设备支持 (CPU/CUDA)
+    - 完整错误处理
+    - 详细日志输出
+    - WandB实验追踪
+
+使用方法:
+    # 直接运行
+    python main.py
+    
+    # 通过run.py调用
+    python run.py --mode train
+
+输出:
+    - 训练日志
+    - 模型检查点
+    - 最佳模型
+    - 训练统计
 
 作者: 基于SwinFuse项目重构
 日期: 2025年9月
@@ -137,7 +175,13 @@ def main(args: Optional[argparse.Namespace] = None):
     # 创建训练器
     print("正在初始化训练器...")
     try:
-        trainer = Trainer(model, train_loader, val_loader, config)
+        trainer = Trainer(
+            model=model, 
+            train_loader=train_loader, 
+            val_loader=val_loader, 
+            config=config,
+            use_wandb=args.use_wandb if hasattr(args, 'use_wandb') else False
+        )
     except Exception as e:
         print(f"❌ 初始化训练器失败: {e}")
         return False

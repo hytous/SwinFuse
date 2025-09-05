@@ -1,14 +1,58 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-SwinFuse特征提取器微调项目启动脚本
-支持训练、测试、配置验证等功能
+项目启动脚本 (run.py) - 主要入口点
+
+功能说明:
+    项目的统一启动入口，支持多种运行模式和完整的参数管理
+
+支持模式:
+    - train: 标准训练模式
+        * 支持WandB实验追踪
+        * 支持从检查点恢复
+        * 完整的训练流程
+    - test: 模型测试模式
+        * 加载已训练模型
+        * 在测试集上评估
+    - validate: 环境和配置验证
+        * 检查依赖安装
+        * 验证数据路径
+        * 测试模型加载
+    - optimize: Optuna超参数优化
+        * 自动搜索最优参数
+        * 支持分布式优化
+        * 结果可视化
+    - best-params: 显示最优参数
+        * 展示优化结果
+        * 生成配置文件
+    - clean: 清理临时文件
+
+主要功能:
+    - 命令行参数解析和验证
+    - 多模式执行逻辑
+    - 配置文件管理
+    - 环境依赖检查
+    - 错误处理和日志
+    - WandB和Optuna集成
+
+参数支持:
+    - 训练参数: epochs, batch-size, lr等
+    - 实验管理: use-wandb, experiment-name等
+    - 优化参数: n-trials, study-name等
+    - 路径配置: data-dir, output-dir等
 
 使用示例:
-    python run.py --mode train                    # 开始训练
-    python run.py --mode test --checkpoint best   # 测试最佳模型
-    python run.py --mode validate                 # 验证配置和环境
-    python run.py --mode clean                    # 清理临时文件
+    # 标准训练
+    python run.py --mode train --use-wandb
+    
+    # 超参数优化
+    python run.py --mode optimize --n-trials 50
+    
+    # 使用最优参数训练
+    python run.py --mode train --config best_config.json
+
+文件关系:
+    run.py -> main.py -> trainer.py -> models.py + losses.py + data_loader.py
 
 作者: 基于SwinFuse项目重构
 日期: 2025年9月
@@ -46,7 +90,7 @@ def parse_arguments():
     # 主要模式
     parser.add_argument(
         '--mode',
-        choices=['train', 'test', 'validate', 'clean'],
+        choices=['train', 'test', 'validate', 'clean', 'optimize', 'best-params'],
         default='train',
         help='运行模式 (默认: train)'
     )
@@ -70,6 +114,41 @@ def parse_arguments():
         type=str,
         default='best',
         help='检查点文件路径或类型 (best/latest/路径)'
+    )
+    
+    # 实验管理
+    parser.add_argument(
+        '--use-wandb',
+        action='store_true',
+        help='使用WandB记录实验'
+    )
+    
+    parser.add_argument(
+        '--wandb-project',
+        type=str,
+        default='SwinFuse-FeatureExtractor',
+        help='WandB项目名称'
+    )
+    
+    parser.add_argument(
+        '--experiment-name',
+        type=str,
+        help='实验名称'
+    )
+    
+    # Optuna相关
+    parser.add_argument(
+        '--n-trials',
+        type=int,
+        default=50,
+        help='Optuna优化试验次数'
+    )
+    
+    parser.add_argument(
+        '--study-name',
+        type=str,
+        default='swinfuse_hp_opt',
+        help='Optuna研究名称'
     )
     
     # 数据路径
@@ -306,8 +385,18 @@ def clean_temporary_files():
 
 
 def mode_train(args):
-    """训练模式"""
+    """训练模式 - 支持WandB实验追踪"""
     print("🚀 开始训练模式")
+    
+    # 检查WandB依赖
+    if args.use_wandb:
+        try:
+            import wandb
+            print("✅ WandB可用")
+        except ImportError:
+            print("❌ WandB未安装，请运行: pip install wandb")
+            print("⚠️ 将在不使用WandB的情况下继续训练")
+            args.use_wandb = False
     
     # 验证环境
     if not validate_environment():
@@ -339,19 +428,39 @@ def mode_train(args):
     
     # 开始训练
     try:
-        # 设置参数
-        sys.argv = ['main.py']
-        if args.resume:
-            sys.argv.append('--resume')
+        # 直接调用训练逻辑，不通过main.py
+        from data_loader import create_dataloaders
+        from models import create_feature_extractor
+        from trainer import Trainer
         
-        # 调用主训练函数
-        training_main()
-        print("✅ 训练完成")
+        # 创建数据加载器
+        train_loader, val_loader = create_dataloaders(config)
+        
+        # 创建模型
+        model = create_feature_extractor(config, config.device)
+        if model is None:
+            print("❌ 创建特征提取器失败")
+            return 1
+        
+        # 创建训练器
+        trainer = Trainer(
+            model=model,
+            train_loader=train_loader,
+            val_loader=val_loader,
+            config=config,
+            use_wandb=args.use_wandb
+        )
+        
+        # 开始训练
+        best_val_loss = trainer.train()
+        print(f"✅ 训练完成，最佳验证损失: {best_val_loss:.6f}")
         return 0
         
     except Exception as e:
         print(f"❌ 训练失败: {e}")
         logger.error(f"训练失败: {e}", exc_info=True)
+        import traceback
+        traceback.print_exc()
         return 1
 
 
@@ -425,6 +534,88 @@ def mode_clean(args):
     return 0
 
 
+def mode_optimize(args):
+    """超参数优化模式"""
+    print("🎯 开始超参数优化模式")
+    
+    # 检查Optuna依赖
+    try:
+        from trainer import create_hyperparameter_study, OPTUNA_AVAILABLE
+        if not OPTUNA_AVAILABLE:
+            print("❌ Optuna未安装，请运行: pip install optuna")
+            return 1
+    except ImportError:
+        print("❌ Optuna依赖导入失败")
+        return 1
+    
+    # 加载配置
+    config = get_config()
+    update_config_from_args(config, args)
+    
+    # 定义工厂函数
+    def model_factory(cfg):
+        from models import create_feature_extractor
+        return create_feature_extractor(cfg)
+    
+    def data_loaders_factory(cfg):
+        from data_loader import create_dataloaders
+        return create_dataloaders(cfg)
+    
+    try:
+        # 执行优化
+        study = create_hyperparameter_study(
+            config=config,
+            model_factory=model_factory,
+            data_loaders_factory=data_loaders_factory,
+            n_trials=args.n_trials
+        )
+        
+        # 保存最佳参数
+        import json
+        best_params_file = f"best_params_{args.study_name}.json"
+        with open(best_params_file, 'w', encoding='utf-8') as f:
+            json.dump(study.best_params, f, indent=2, ensure_ascii=False)
+        print(f"✅ 最佳参数已保存到: {best_params_file}")
+        
+        return 0
+    except KeyboardInterrupt:
+        print("\n⚠️ 优化被用户中断")
+        return 1
+    except Exception as e:
+        print(f"❌ 优化失败: {e}")
+        import traceback
+        traceback.print_exc()
+        return 1
+
+
+def mode_best_params(args):
+    """显示最佳参数"""
+    import json
+    best_params_file = f"best_params_{args.study_name}.json"
+    
+    if not os.path.exists(best_params_file):
+        print(f"❌ 最佳参数文件不存在: {best_params_file}")
+        print(f"💡 请先运行优化: python {sys.argv[0]} --mode optimize")
+        return 1
+    
+    with open(best_params_file, 'r', encoding='utf-8') as f:
+        best_params = json.load(f)
+    
+    print("🏆 最佳超参数:")
+    print("=" * 50)
+    for key, value in best_params.items():
+        print(f"{key:20s}: {value}")
+    print("=" * 50)
+    
+    print(f"💡 使用最佳参数训练:")
+    print(f"python {sys.argv[0]} --mode train --use-wandb \\")
+    for key, value in best_params.items():
+        if key in ['learning_rate', 'batch_size', 'weight_decay']:
+            print(f"  --{key.replace('_', '-')} {value} \\")
+    
+    return 0
+
+
 def main():
     """主函数"""
     args = parse_arguments()
@@ -446,6 +637,10 @@ def main():
         return mode_validate(args)
     elif args.mode == 'clean':
         return mode_clean(args)
+    elif args.mode == 'optimize':
+        return mode_optimize(args)
+    elif args.mode == 'best-params':
+        return mode_best_params(args)
     else:
         print(f"❌ 未知模式: {args.mode}")
         return 1
