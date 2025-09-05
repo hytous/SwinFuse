@@ -236,6 +236,9 @@ class Trainer:
         self.device = torch.device(config.device)
         self.trial = trial  # Optuna试验对象
         
+        # 多GPU设置
+        self.setup_multi_gpu()
+        
         # 创建损失函数
         self.criterion = create_loss_function(config)
         self.criterion.to(self.device)
@@ -269,6 +272,120 @@ class Trainer:
         self.best_model_path = os.path.join(config.paths.checkpoint_dir, 'best_model.pth')
         
         print("训练器初始化完成")
+    
+    def setup_multi_gpu(self):
+        """设置多GPU训练"""
+        if not self.config.training.use_multi_gpu:
+            # 单GPU或CPU模式
+            self.model = self.model.to(self.device)
+            self.is_multi_gpu = False
+            return
+        
+        if not torch.cuda.is_available():
+            print("⚠️ CUDA不可用，无法使用多GPU")
+            self.model = self.model.to(self.device)
+            self.is_multi_gpu = False
+            return
+        
+        # 解析GPU IDs
+        gpu_ids = [int(x.strip()) for x in self.config.training.gpu_ids.split(',')]
+        
+        if len(gpu_ids) < 2:
+            print("⚠️ 指定的GPU数量少于2，使用单GPU模式")
+            self.model = self.model.to(self.device)
+            self.is_multi_gpu = False
+            return
+        
+        # 检查GPU可用性
+        available_gpus = [gpu_id for gpu_id in gpu_ids if gpu_id < torch.cuda.device_count()]
+        if len(available_gpus) != len(gpu_ids):
+            invalid_gpus = set(gpu_ids) - set(available_gpus)
+            print(f"⚠️ GPU {invalid_gpus} 不可用")
+        
+        if len(available_gpus) < 2:
+            print("⚠️ 可用GPU数量不足，使用单GPU模式")
+            self.model = self.model.to(self.device)
+            self.is_multi_gpu = False
+            return
+        
+        # 设置多GPU
+        self.model = self.model.to(self.device)
+        
+        if self.config.training.distributed:
+            # 分布式数据并行 (DDP) - 需要额外设置
+            print("⚠️ 分布式训练需要通过torch.distributed.launch启动")
+            print("当前使用DataParallel模式")
+            self.model = nn.DataParallel(self.model, device_ids=available_gpus)
+        else:
+            # 数据并行 (DataParallel)
+            self.model = nn.DataParallel(self.model, device_ids=available_gpus)
+        
+        self.is_multi_gpu = True
+        self.gpu_ids = available_gpus
+        print(f"✅ 多GPU模式已启用，使用GPU: {available_gpus}")
+        
+        # 调整批次大小提示
+        effective_batch_size = self.config.training.batch_size * len(available_gpus)
+        print(f"📊 有效批次大小: {self.config.training.batch_size} × {len(available_gpus)} = {effective_batch_size}")
+    
+    def save_model(self, epoch: int, is_best: bool = False, additional_info: dict = None):
+        """保存模型"""
+        # 获取模型状态字典（处理DataParallel包装）
+        if isinstance(self.model, nn.DataParallel):
+            model_state_dict = self.model.module.state_dict()
+        else:
+            model_state_dict = self.model.state_dict()
+        
+        checkpoint = {
+            'epoch': epoch,
+            'model_state_dict': model_state_dict,
+            'optimizer_state_dict': self.optimizer.state_dict(),
+            'config': self.config,
+            'is_multi_gpu': self.is_multi_gpu,
+        }
+        
+        if additional_info:
+            checkpoint.update(additional_info)
+        
+        if self.scheduler:
+            checkpoint['scheduler_state_dict'] = self.scheduler.state_dict()
+        
+        # 保存检查点
+        checkpoint_path = os.path.join(
+            self.config.paths.checkpoint_dir, 
+            f'checkpoint_epoch_{epoch}.pth'
+        )
+        torch.save(checkpoint, checkpoint_path)
+        
+        # 保存最佳模型
+        if is_best:
+            torch.save(checkpoint, self.best_model_path)
+            print(f"💾 最佳模型已保存: {self.best_model_path}")
+    
+    def load_model(self, checkpoint_path: str, load_optimizer: bool = True):
+        """加载模型"""
+        if not os.path.exists(checkpoint_path):
+            print(f"❌ 检查点文件不存在: {checkpoint_path}")
+            return False
+        
+        checkpoint = torch.load(checkpoint_path, map_location=self.device)
+        
+        # 加载模型状态
+        if isinstance(self.model, nn.DataParallel):
+            self.model.module.load_state_dict(checkpoint['model_state_dict'])
+        else:
+            self.model.load_state_dict(checkpoint['model_state_dict'])
+        
+        # 加载优化器状态
+        if load_optimizer and 'optimizer_state_dict' in checkpoint:
+            self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        
+        # 加载调度器状态
+        if self.scheduler and 'scheduler_state_dict' in checkpoint:
+            self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+        
+        print(f"✅ 模型已从检查点加载: {checkpoint_path}")
+        return True
     
     def _create_optimizer(self):
         """创建优化器"""
@@ -633,7 +750,7 @@ if __name__ == "__main__":
     train_loader, val_loader = create_dataloaders(config)
     
     # 创建模型
-    model = create_feature_extractor(config, config.device)
+    model = create_feature_extractor(config, config.device, move_to_device=not config.training.use_multi_gpu)
     
     if model is not None:
         # 创建训练器

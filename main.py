@@ -164,7 +164,9 @@ def main(args: Optional[argparse.Namespace] = None):
     # 创建模型
     print("正在创建特征提取器...")
     try:
-        model = create_feature_extractor(config, config.device)
+        # 在多GPU模式下，不立即移动到设备，让trainer处理
+        move_to_device = not config.training.use_multi_gpu
+        model = create_feature_extractor(config, config.device, move_to_device=move_to_device)
         if model is None:
             print("❌ 创建特征提取器失败")
             return False

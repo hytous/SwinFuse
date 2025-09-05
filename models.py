@@ -239,8 +239,14 @@ def load_pretrained_swinfuse(model_path: str, device: str = 'cpu') -> Optional[S
         return None
 
 
-def create_feature_extractor(config, device: str = 'cpu') -> Optional[FeatureExtractor]:
-    """创建特征提取器"""
+def create_feature_extractor(config, device: str = 'cpu', move_to_device: bool = True) -> Optional[FeatureExtractor]:
+    """创建特征提取器
+    
+    Args:
+        config: 配置对象
+        device: 设备
+        move_to_device: 是否立即移动到设备（多GPU情况下由trainer处理）
+    """
     # 加载预训练模型
     swinfuse_model = load_pretrained_swinfuse(
         config.paths.pretrained_model_path, 
@@ -252,7 +258,10 @@ def create_feature_extractor(config, device: str = 'cpu') -> Optional[FeatureExt
     
     # 创建特征提取器
     feature_extractor = FeatureExtractor(swinfuse_model, config)
-    feature_extractor.to(device)
+    
+    # 仅在需要时移动到设备
+    if move_to_device:
+        feature_extractor.to(device)
     
     # 计算参数量
     total_params = sum(p.numel() for p in feature_extractor.parameters())

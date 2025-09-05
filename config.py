@@ -46,6 +46,13 @@ class TrainingConfig:
     early_stopping: bool = True
     patience: int = 15
     min_delta: float = 1e-6
+    
+    # 多GPU配置
+    # use_multi_gpu: bool = False
+    use_multi_gpu: bool = True
+    gpu_ids: str = "0,1"  # 使用的GPU编号，逗号分隔，如"0,1,2,3"
+    distributed: bool = False  # 是否使用分布式训练(DDP)
+    local_rank: int = -1  # 分布式训练的本地rank
 
 
 @dataclass 
@@ -129,10 +136,69 @@ class Config:
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.random_seed = 42
         
+        # GPU相关配置
+        self.num_gpus = torch.cuda.device_count()
+        self.available_gpus = list(range(self.num_gpus)) if torch.cuda.is_available() else []
+        
         # 日志配置
         self.print_interval = 10
         self.save_interval = 5
         self.eval_interval = 1
+    
+    def setup_gpu_config(self, gpu_ids: str = None, use_multi_gpu: bool = False, distributed: bool = False):
+        """设置GPU配置"""
+        if not torch.cuda.is_available():
+            print("⚠️ CUDA不可用，将使用CPU")
+            self.device = "cpu"
+            self.training.use_multi_gpu = False
+            self.training.distributed = False
+            return
+        
+        # 解析GPU ID
+        if gpu_ids:
+            try:
+                requested_gpus = [int(x.strip()) for x in gpu_ids.split(',')]
+                # 验证GPU ID有效性
+                valid_gpus = [gpu_id for gpu_id in requested_gpus if gpu_id < self.num_gpus]
+                if not valid_gpus:
+                    print(f"❌ 指定的GPU不可用，可用GPU: {self.available_gpus}")
+                    valid_gpus = [0] if self.available_gpus else []
+                elif len(valid_gpus) != len(requested_gpus):
+                    invalid_gpus = set(requested_gpus) - set(valid_gpus)
+                    print(f"⚠️ GPU {invalid_gpus} 不可用，将使用: {valid_gpus}")
+                
+                self.available_gpus = valid_gpus
+                self.training.gpu_ids = ','.join(map(str, valid_gpus))
+            except ValueError:
+                print(f"❌ 无效的GPU ID格式: {gpu_ids}")
+                self.available_gpus = [0] if self.num_gpus > 0 else []
+        
+        # 设置多GPU配置
+        if use_multi_gpu and len(self.available_gpus) > 1:
+            self.training.use_multi_gpu = True
+            self.training.distributed = distributed
+            self.device = f"cuda:{self.available_gpus[0]}"
+            print(f"✅ 多GPU模式: 使用GPU {self.available_gpus}")
+            
+            if distributed:
+                print("✅ 分布式训练模式已启用")
+        elif self.available_gpus:
+            self.training.use_multi_gpu = False
+            self.training.distributed = False
+            self.device = f"cuda:{self.available_gpus[0]}"
+            print(f"✅ 单GPU模式: 使用GPU {self.available_gpus[0]}")
+        else:
+            self.device = "cpu"
+            print("⚠️ 无可用GPU，使用CPU")
+    
+    def get_effective_batch_size(self):
+        """获取有效批次大小"""
+        base_batch_size = self.training.batch_size
+        if self.training.use_multi_gpu:
+            # 多GPU时，每个GPU处理的批次大小
+            num_gpus = len(self.available_gpus)
+            return base_batch_size * num_gpus
+        return base_batch_size
     
     def create_directories(self):
         """创建必要的目录"""
@@ -164,11 +230,19 @@ class Config:
         print("SwinFuse微调配置摘要")
         print("=" * 60)
         
+        print(f"\n设备配置:")
+        print(f"  主设备: {self.device}")
+        print(f"  可用GPU数量: {self.num_gpus}")
+        print(f"  使用的GPU: {self.available_gpus}")
+        print(f"  多GPU模式: {self.training.use_multi_gpu}")
+        if self.training.use_multi_gpu:
+            print(f"  分布式训练: {self.training.distributed}")
+            print(f"  有效批次大小: {self.get_effective_batch_size()}")
+        
         print(f"\n训练配置:")
         print(f"  轮数: {self.training.num_epochs}")
         print(f"  批量: {self.training.batch_size}")
         print(f"  学习率: {self.training.learning_rate}")
-        print(f"  设备: {self.device}")
         
         print(f"\n损失配置:")
         print(f"  类型: {self.loss.loss_type}")

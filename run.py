@@ -84,6 +84,11 @@ def parse_arguments():
   %(prog)s --mode test --checkpoint best    # 测试最佳模型
   %(prog)s --mode validate                  # 验证配置和环境
   %(prog)s --mode clean                     # 清理临时文件
+  
+多GPU使用示例:
+  %(prog)s --mode train --multi-gpu --gpu-ids 0,1        # 使用GPU 0和1训练
+  %(prog)s --mode train --multi-gpu --gpu-ids 0,1,2,3    # 使用GPU 0,1,2,3训练
+  %(prog)s --mode train --distributed --gpu-ids 0,1      # 分布式训练(实验性)
         """
     )
     
@@ -114,6 +119,35 @@ def parse_arguments():
         type=str,
         default='best',
         help='检查点文件路径或类型 (best/latest/路径)'
+    )
+    
+    # GPU相关参数
+    parser.add_argument(
+        '--gpu-ids',
+        type=str,
+        # default=None,
+        default="0,1",
+        help='指定使用的GPU编号，逗号分隔 (例如: 0,1,2,3)'
+    )
+    
+    parser.add_argument(
+        '--multi-gpu',
+        # action='store_true',
+        action='store_false',
+        help='启用多GPU训练'
+    )
+    
+    parser.add_argument(
+        '--distributed',
+        action='store_true',
+        help='启用分布式训练 (DDP)'
+    )
+    
+    parser.add_argument(
+        '--local-rank',
+        type=int,
+        default=-1,
+        help='分布式训练的本地rank'
     )
     
     # 实验管理
@@ -252,9 +286,12 @@ def update_config_from_args(config: Config, args: argparse.Namespace):
     if args.pretrained:
         config.paths.pretrained_model_path = args.pretrained
     
-    # 设备配置
-    if args.gpu is not None:
+    # GPU配置（在config.setup_gpu_config之后更新特定参数）
+    if hasattr(args, 'gpu') and args.gpu is not None:
         config.device = f"cuda:{args.gpu}"
+    
+    # 多GPU配置已在setup_gpu_config中处理
+    # 这里可以添加其他GPU相关的覆盖设置
 
 
 def validate_environment():
@@ -404,6 +441,17 @@ def mode_train(args):
     
     # 加载配置
     config = get_config()
+    
+    # 设置GPU配置
+    config.setup_gpu_config(
+        gpu_ids=args.gpu_ids,
+        use_multi_gpu=args.multi_gpu,
+        distributed=args.distributed
+    )
+    
+    # 设置分布式训练参数
+    if args.distributed and args.local_rank >= 0:
+        config.training.local_rank = args.local_rank
     
     # 应用命令行参数
     update_config_from_args(config, args)
