@@ -83,8 +83,8 @@ class LossConfig:
 class PathConfig:
     """路径配置"""
     # 数据路径
-    ir_data_path: str = "E:/R/registration/my_data/图像融合常用数据集整理/红外和可见光图像融合数据集/RoadScene/RoadScene-master/train/ir"
-    vis_data_path: str = "E:/R/registration/my_data/图像融合常用数据集整理/红外和可见光图像融合数据集/RoadScene/RoadScene-master/train/vi"
+    ir_data_path: str = "D:/wbh/Registration/data/图像融合常用数据集整理/红外和可见光图像融合数据集/RoadScene/RoadScene-master/ir"
+    vis_data_path: str = "D:/wbh/Registration/data/图像融合常用数据集整理/红外和可见光图像融合数据集/RoadScene/RoadScene-master/vi"
     
     # 模型路径
     pretrained_model_path: str = "SwinFuse_model/Final_epoch_50_Mon_Feb_14_17_37_05_2022_1e3.model"

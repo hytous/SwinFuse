@@ -23,7 +23,7 @@ from pathlib import Path
 # 添加项目根目录到Python路径
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from config import Config
+from config import get_config, Config
 from utils_clean import setup_logging, print_system_info, backup_config
 from main import main as training_main
 
@@ -152,10 +152,12 @@ def update_config_from_args(config: Config, args: argparse.Namespace):
     
     # 数据配置
     if args.data_dir:
-        config.data.data_root = args.data_dir
+        # 数据目录暂时设置到paths中，或者需要分别设置ir和vis路径
+        config.paths.ir_data_path = os.path.join(args.data_dir, "ir")
+        config.paths.vis_data_path = os.path.join(args.data_dir, "vis")
     
     if args.batch_size:
-        config.data.batch_size = args.batch_size
+        config.training.batch_size = args.batch_size
     
     if args.workers:
         config.data.num_workers = args.workers
@@ -169,11 +171,11 @@ def update_config_from_args(config: Config, args: argparse.Namespace):
     
     # 模型配置
     if args.pretrained:
-        config.model.pretrained_path = args.pretrained
+        config.paths.pretrained_model_path = args.pretrained
     
-    # 路径配置
+    # 设备配置
     if args.gpu is not None:
-        config.paths.device = f"cuda:{args.gpu}"
+        config.device = f"cuda:{args.gpu}"
 
 
 def validate_environment():
@@ -188,7 +190,7 @@ def validate_environment():
     
     # 检查必要的包
     required_packages = [
-        'torch', 'torchvision', 'numpy', 'opencv-python',
+        'torch', 'torchvision', 'numpy', 'cv2',
         'matplotlib', 'seaborn', 'tqdm', 'argparse'
     ]
     
@@ -227,19 +229,24 @@ def validate_config(config: Config):
     warnings = []
     
     # 检查必要路径
-    if not config.data.data_root:
-        errors.append("未设置数据集根目录")
-    elif not os.path.exists(config.data.data_root):
-        warnings.append(f"数据集目录不存在: {config.data.data_root}")
+    if not config.paths.ir_data_path:
+        errors.append("未设置红外图像路径")
+    elif not os.path.exists(config.paths.ir_data_path):
+        warnings.append(f"红外图像目录不存在: {config.paths.ir_data_path}")
     
-    if config.model.pretrained_path and not os.path.exists(config.model.pretrained_path):
-        warnings.append(f"预训练模型文件不存在: {config.model.pretrained_path}")
+    if not config.paths.vis_data_path:
+        errors.append("未设置可见光图像路径")
+    elif not os.path.exists(config.paths.vis_data_path):
+        warnings.append(f"可见光图像目录不存在: {config.paths.vis_data_path}")
+    
+    if config.paths.pretrained_model_path and not os.path.exists(config.paths.pretrained_model_path):
+        warnings.append(f"预训练模型文件不存在: {config.paths.pretrained_model_path}")
     
     # 检查参数合理性
     if config.training.learning_rate <= 0:
         errors.append("学习率必须大于0")
     
-    if config.data.batch_size <= 0:
+    if config.training.batch_size <= 0:
         errors.append("批次大小必须大于0")
     
     if config.training.num_epochs <= 0:
@@ -307,7 +314,7 @@ def mode_train(args):
         return 1
     
     # 加载配置
-    config = Config()
+    config = get_config()
     
     # 应用命令行参数
     update_config_from_args(config, args)
@@ -356,7 +363,7 @@ def mode_test(args):
     if not validate_environment():
         return 1
     
-    config = Config()
+    config = get_config()
     update_config_from_args(config, args)
     
     # 查找检查点文件
@@ -393,7 +400,7 @@ def mode_validate(args):
     env_ok = validate_environment()
     
     # 验证配置
-    config = Config()
+    config = get_config()
     update_config_from_args(config, args)
     config_ok = validate_config(config)
     

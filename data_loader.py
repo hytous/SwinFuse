@@ -14,7 +14,6 @@ import torch
 from torch.utils.data import Dataset, DataLoader, random_split
 from PIL import Image
 from typing import Tuple, List, Optional
-import cv2
 
 
 class RoadSceneDataset(Dataset):
